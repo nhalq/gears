@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Author: nhalq
+# Created on Feb 26, 2024, 15:10 PM
+
+log() {
+  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*"
+}
+
+remove_exist_children() {
+  for pid in ${children_pid[@]}; do
+    if [[ ! -d /proc/$pid ]]; then
+      children_pid=(${children_pid[@]/$pid/})
+      log "$pid is exited"
+    fi
+  done
+}
+
+spawn_child() {
+  local num_processes=$1
+  # if num_processes is not provided, it will spawn 1 process
+
+  for i in $(seq 1 $num_processes); do
+    $aspawn_command &
+    children_pid+=($!)
+    log "$! is spawned"
+  done
+}
+
+spawn_loop() {
+  log "Begin spawn loop"
+  while [[ 1 ]]; do
+    reconfig
+    remove_exist_children
+
+    num_alives=${#children_pid[@]}
+    if [[ $num_alives -lt $aspawn_required_process ]]; then
+      spawn_child $((aspawn_required_process - num_alives))
+      echo ${children_pid[@]} >run/aspawn.children.pid
+    fi
+
+    sleep $aspawn_interval_seconds
+  done
+}
+
+reconfig() {
+  if [[ -f aspawn.conf ]]; then
+    source aspawn.conf
+  fi
+}
+
+setup() {
+  aspawn_required_process=1
+  aspawn_interval_seconds=4
+  reconfig
+
+  if [[ -z "$aspawn_command" ]]; then
+    log "aspawn_command is not set"
+    exit 1
+  fi
+
+  mkdir -p run/
+  echo $$ >run/aspawn.pid
+}
+
+cleanup() {
+  kill -TERM ${children_pid[@]}
+  rm -rf run/aspawn.pid run/aspawn.children.pid
+  exit 0
+}
+
+main() {
+  setup
+
+  children_pid=()
+  trap cleanup SIGINT
+
+  spawn_loop
+  cleanup
+}
+
+main
